@@ -18,11 +18,6 @@ on:
 
 jobs:
   sync:
-    # Only trigger for the CSH label — this is also checked in the
-    # reusable workflow, but filtering here avoids a cross-repo checkout
-    # for irrelevant label events.
     if: github.event.label.name == 'CSH'
     uses: 2i2c-org/csh-sync/.github/workflows/csh-sync.yml@main
-    secrets:
-      ASANA_ACCESS_TOKEN: ${{ secrets.ASANA_ACCESS_TOKEN }}
-      CSH_SYNC_PAT: ${{ secrets.CSH_SYNC_PAT }}
+    secrets: inherit

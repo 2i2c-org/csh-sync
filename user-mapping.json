@@ -1,8 +1,0 @@
-{
-  "_comment": "Map GitHub usernames to Asana user GIDs. Find GIDs via: GET /users?workspace={workspace_gid}",
-
-  "users": {
-    "jmunroe": "REPLACE_WITH_ASANA_USER_GID",
-    "example-user": "REPLACE_WITH_ASANA_USER_GID"
-  }
-}
