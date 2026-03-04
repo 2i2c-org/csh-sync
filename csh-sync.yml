@@ -1,0 +1,57 @@
+# Reusable workflow: GitHub Issue → Asana Task sync
+# Called by thin caller workflows in individual 2i2c-org repos.
+#
+# Trigger: issues.labeled event (filtered to "CSH" label in the script)
+# Requires: ASANA_ACCESS_TOKEN and CSH_SYNC_PAT as secrets
+
+name: CSH Sync to Asana
+
+on:
+  workflow_call:
+    secrets:
+      ASANA_ACCESS_TOKEN:
+        required: true
+        description: "Asana personal access token or service account token"
+      CSH_SYNC_PAT:
+        required: true
+        description: "GitHub PAT with repo + project:read scopes for GraphQL queries"
+
+jobs:
+  sync-to-asana:
+    runs-on: ubuntu-latest
+
+    # Only run when the label added is "CSH"
+    if: github.event.label.name == 'CSH'
+
+    steps:
+      - name: Checkout csh-sync repo
+        uses: actions/checkout@v4
+        with:
+          repository: 2i2c-org/csh-sync
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run sync
+        env:
+          ASANA_ACCESS_TOKEN: ${{ secrets.ASANA_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CSH_SYNC_PAT }}
+          # Pass the full event context to the script
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_HTML_URL: ${{ github.event.issue.html_url }}
+          ISSUE_STATE: ${{ github.event.issue.state }}
+          ISSUE_ASSIGNEES: ${{ toJson(github.event.issue.assignees) }}
+          ISSUE_LABELS: ${{ toJson(github.event.issue.labels) }}
+          ISSUE_MILESTONE: ${{ toJson(github.event.issue.milestone) }}
+          REPO_FULL_NAME: ${{ github.repository }}
+        run: node scripts/sync-to-asana.js

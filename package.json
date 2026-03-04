@@ -1,0 +1,18 @@
+{
+  "name": "csh-sync",
+  "version": "1.0.0",
+  "description": "Sync GitHub issues labeled CSH to Asana tasks for 2i2c Community Success Hours tracking",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync-to-asana.js",
+    "test": "node --test scripts/__tests__/"
+  },
+  "dependencies": {
+    "@octokit/graphql": "^7.0.0",
+    "marked": "^12.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
