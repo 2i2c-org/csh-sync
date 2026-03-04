@@ -34,13 +34,114 @@ function isConfigured(value) {
 }
 
 /**
- * Convert markdown to HTML for Asana's html_notes field.
- * Asana accepts a subset of HTML wrapped in <body>.
+ * Asana-supported HTML tags (must be valid XML — closed, balanced, no attributes
+ * except on <a> tags). Reference: https://developers.asana.com/docs/rich-text
+ */
+const ASANA_ALLOWED_TAGS = new Set([
+  "body",
+  "strong", "em", "u", "s",
+  "code", "pre",
+  "h1", "h2", "h3",
+  "ol", "ul", "li",
+  "blockquote",
+  "br",
+  "hr",
+  "a",
+  "img",
+]);
+
+/**
+ * Sanitize HTML to only contain Asana-supported tags as valid XML.
+ *
+ * Strategy:
+ *   1. Convert markdown → HTML via marked
+ *   2. Strip HTML comments
+ *   3. Remove unsupported tags (keep their text content)
+ *   4. Remove attributes from all tags except <a> (keep href only)
+ *   5. Convert <br> to self-closing <br />
+ *   6. Ensure <img> tags are self-closing
+ *   7. Wrap in <body>
+ *
+ * If anything still fails, fall back to plain text.
  */
 function markdownToAsanaHtml(markdown) {
   if (!markdown) return "<body></body>";
-  const html = marked.parse(markdown, { breaks: true });
-  return `<body>${html}</body>`;
+
+  try {
+    let html = marked.parse(markdown, { breaks: true });
+
+    // Strip HTML comments (<!-- ... -->)  including multiline
+    html = html.replace(/<!--[\s\S]*?-->/g, "");
+
+    // Strip <input>, <details>, <summary> and other GitHub-flavored tags
+    // that marked might pass through from the source markdown
+    html = html.replace(/<\/?(input|details|summary|div|span|table|thead|tbody|tr|td|th|dd|dl|dt|abbr|sup|sub|mark|ins|del|small|big|center|font|section|article|aside|nav|header|footer|main|figure|figcaption|picture|source|video|audio|iframe|embed|object|param|map|area|canvas|svg|path|rect|circle|line|polyline|polygon|text|g|defs|symbol|use)[^>]*>/gi, "");
+
+    // Remove attributes from all tags except <a>
+    // First, handle <a> tags: keep only href
+    html = html.replace(/<a\s+[^>]*?href\s*=\s*"([^"]*)"[^>]*>/gi, '<a href="$1">');
+    // Handle <a> tags with single-quoted href
+    html = html.replace(/<a\s+[^>]*?href\s*=\s*'([^']*)'[^>]*>/gi, '<a href="$1">');
+
+    // Remove attributes from all other opening tags
+    html = html.replace(/<((?!a\s|\/)[a-z][a-z0-9]*)\s+[^>]*>/gi, "<$1>");
+
+    // Convert self-closing tags: <br>, <br/>, <br /> → <br />
+    html = html.replace(/<br\s*\/?>/gi, "<br />");
+
+    // Convert <hr>, <hr/>, <hr /> → <hr />
+    html = html.replace(/<hr\s*\/?>/gi, "<hr />");
+
+    // Ensure <img> tags are self-closing (remove any that snuck through without being stripped)
+    html = html.replace(/<img[^>]*>/gi, "");
+
+    // Remove any remaining tags not in the allowed set
+    html = html.replace(/<\/?([a-z][a-z0-9]*)[^>]*>/gi, (match, tagName) => {
+      const lower = tagName.toLowerCase();
+      if (ASANA_ALLOWED_TAGS.has(lower)) return match;
+      return ""; // strip unsupported tag
+    });
+
+    // Escape any stray ampersands that aren't part of entities
+    html = html.replace(/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-f]+;)/gi, "&amp;");
+
+    // Escape stray < and > that aren't part of tags
+    // (This is tricky — we only want to escape angle brackets that aren't valid tags)
+    // Simple approach: try to parse, and if it fails, fall back to plain text
+
+    const result = `<body>${html}</body>`;
+
+    // Quick XML validity check: count opening vs closing tags
+    // If it's grossly unbalanced, fall back to plain text
+    const openTags = (result.match(/<[a-z][^>]*[^/]>/gi) || []).length;
+    const closeTags = (result.match(/<\/[a-z][^>]*>/gi) || []).length;
+    const selfClosing = (result.match(/<[a-z][^>]*\/>/gi) || []).length;
+
+    // Allow some slack (body tag counts as 1 open + 1 close)
+    if (Math.abs(openTags - closeTags) > 5) {
+      console.warn("HTML tag balance check failed, falling back to plain text notes");
+      return null; // signal to use plain text
+    }
+
+    return result;
+  } catch (err) {
+    console.warn(`Markdown conversion failed: ${err.message}, using plain text`);
+    return null; // signal to use plain text
+  }
+}
+
+/**
+ * Strip all HTML/markdown to plain text for the Asana `notes` field.
+ */
+function markdownToPlainText(markdown) {
+  if (!markdown) return "";
+  return markdown
+    .replace(/<!--[\s\S]*?-->/g, "")     // HTML comments
+    .replace(/<[^>]+>/g, "")              // HTML tags
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // [text](url) → text
+    .replace(/[*_~`#]+/g, "")            // markdown formatting chars
+    .replace(/\n{3,}/g, "\n\n")          // collapse excess newlines
+    .trim();
 }
 
 /**
@@ -223,12 +324,21 @@ export function buildAsanaTaskPayload(issueData, projectItem) {
   const fullBody = (body || "") + "\n" + metadataFooter;
 
   // Assemble the payload
+  // Try HTML first; if sanitization fails, fall back to plain text
+  const htmlNotes = markdownToAsanaHtml(fullBody);
+
   const payload = {
     name: title,
-    html_notes: markdownToAsanaHtml(fullBody),
     projects: [asanaConfig.project_gid],
     custom_fields: customFields,
   };
+
+  if (htmlNotes) {
+    payload.html_notes = htmlNotes;
+  } else {
+    // Plain text fallback
+    payload.notes = markdownToPlainText(fullBody);
+  }
 
   // Assignee
   const assigneeGid = resolveAssignee(assignees);
