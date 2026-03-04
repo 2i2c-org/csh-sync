@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "setup": "node scripts/setup-asana.js",
     "sync": "node scripts/sync-to-asana.js",
     "test": "node --test scripts/__tests__/"
   },

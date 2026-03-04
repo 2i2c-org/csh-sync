@@ -35,7 +35,33 @@ csh-sync/                          # This repo (2i2c-org/csh-sync)
 
 Create `2i2c-org/csh-sync` and push this code.
 
-### 2. Configure Asana
+### 2. Configure Asana (automated)
+
+Run the setup script to discover GIDs and validate your Asana project:
+
+```bash
+export ASANA_ACCESS_TOKEN="your-asana-token"
+
+# Interactive mode — walks you through workspace and project selection
+npm run setup
+
+# Or if you already know the project GID
+node scripts/setup-asana.js --project-gid 1234567890
+```
+
+The script will:
+- List your workspaces and projects
+- Read all custom fields on the selected project
+- Validate that required fields exist with the correct types
+- Report any missing fields you need to create
+- List all enum option GIDs (so you don't have to look them up)
+- List workspace users (for the user mapping file)
+- Generate a populated `config/asana-config.json` and a template `config/user-mapping.json`
+
+After running the script, you'll need to:
+1. Create any missing required fields it reports (at minimum: `GitHub Issue URL`)
+2. Edit `config/user-mapping.json` to map GitHub usernames to Asana user GIDs
+3. If your Asana enum option names differ from GitHub's, adjust the `enum_mappings` keys
 
 In your Asana CSH project, create custom fields that correspond to the GitHub board fields you want to sync. At minimum:
 

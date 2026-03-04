@@ -1,0 +1,30 @@
+{
+  "workspace_gid": "1200524400901350",
+  "project_gid": "1213265455732675",
+  "github_project": {
+    "org": "2i2c-org",
+    "project_number": 57,
+    "project_name": "Product and Services"
+  },
+  "custom_fields": {
+    "start_date": null,
+    "end_date": null,
+    "github_issue_url": "1211997469354953",
+    "github_repo": "1213542352390511",
+    "estimate": "1213545539879422",
+    "hours_spent": "1213545539879424",
+    "github_labels": null,
+    "status": null,
+    "priority": null,
+    "allocation": null,
+    "unplanned": null,
+    "iteration": null,
+    "process": null,
+    "sow": null
+  },
+  "enum_mappings": {},
+  "sections": {
+    "Untitled section": "1213265455732676",
+    "default": "1213265455732676"
+  }
+}
