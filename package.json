@@ -7,6 +7,7 @@
   "scripts": {
     "setup": "node scripts/setup-asana.js",
     "sync": "node scripts/sync-to-asana.js",
+    "sync:all": "node scripts/sync-all.js",
     "test": "node --test scripts/__tests__/"
   },
   "dependencies": {

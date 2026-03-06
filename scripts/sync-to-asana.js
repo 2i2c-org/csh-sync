@@ -125,10 +125,13 @@ async function postGitHubComment(githubToken, repoFullName, issueNumber, asanaTa
 async function main() {
   console.log("=== CSH Sync: GitHub → Asana ===\n");
 
+  const eventAction = process.env.EVENT_ACTION || "unknown";
+  console.log(`Trigger: issues.${eventAction}`);
+
   // Parse inputs
   const { asanaToken, githubToken, issueData } = parseEnv();
   console.log(`Issue: ${issueData.repoFullName}#${issueData.number} — "${issueData.title}"`);
-
+  console.log(`State: ${issueData.state}`);
   // Fetch project board metadata via GraphQL (Product and Services #57)
   console.log("\nFetching GitHub Project #57 metadata...");
   let projectItem = null;

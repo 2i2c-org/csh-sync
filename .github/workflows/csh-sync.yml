@@ -1,7 +1,10 @@
 # Reusable workflow: GitHub Issue → Asana Task sync
 # Called by thin caller workflows in individual 2i2c-org repos.
 #
-# Trigger: issues.labeled event (filtered to "CSH" label in the script)
+# Triggers:
+#   - issues.labeled (CSH label added → create task)
+#   - issues.edited, assigned, etc. (issue already has CSH label → update task)
+#
 # Requires: ASANA_ACCESS_TOKEN and CSH_SYNC_PAT as secrets
 
 name: CSH Sync to Asana
@@ -20,8 +23,11 @@ jobs:
   sync-to-asana:
     runs-on: ubuntu-latest
 
-    # Only run when the label added is "CSH"
-    if: github.event.label.name == 'CSH'
+    # The caller workflow already filters for CSH relevance,
+    # but double-check here as a safety net.
+    if: >-
+      (github.event.action == 'labeled' && github.event.label.name == 'CSH')
+      || (github.event.action != 'labeled' && contains(toJson(github.event.issue.labels.*.name), 'CSH'))
 
     steps:
       - name: Checkout csh-sync repo
@@ -43,6 +49,7 @@ jobs:
         env:
           ASANA_ACCESS_TOKEN: ${{ secrets.ASANA_ACCESS_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.CSH_SYNC_PAT }}
+          EVENT_ACTION: ${{ github.event.action }}
           # Pass the full event context to the script
           ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}

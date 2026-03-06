@@ -1,0 +1,50 @@
+# Batch sync: scheduled + manual trigger
+#
+# Finds all open CSH-labeled issues across the 2i2c-org organization
+# and syncs their current state (including project board fields) to Asana.
+#
+# This catches changes that don't fire issue webhook events, such as
+# updates to GitHub Project V2 fields (Hours spent, Status, Estimate, etc.)
+#
+# Runs:
+#   - Every 15 minutes on weekdays (cron)
+#   - On-demand via workflow_dispatch (manual button in Actions tab)
+
+name: CSH Batch Sync
+
+on:
+  schedule:
+    # Every 15 minutes, weekdays only (UTC)
+    - cron: "*/15 * * * 1-5"
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Log what would be synced without making changes"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  batch-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run batch sync
+        env:
+          ASANA_ACCESS_TOKEN: ${{ secrets.ASANA_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CSH_SYNC_PAT }}
+          GITHUB_ORG: "2i2c-org"
+        run: node scripts/sync-all.js
