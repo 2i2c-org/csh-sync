@@ -245,6 +245,7 @@ export function buildAsanaTaskPayload(issueData, projectItem) {
     name: title,
     notes: markdownToPlainText(fullBody),
     projects: [asanaConfig.project_gid],
+    completed: issueData.state === "closed",
     custom_fields: customFields,
   };
 
