@@ -11,14 +11,9 @@
  *   5. Post a comment on the GitHub issue with the Asana link
  */
 
-import { fetchProjectMetadata } from "./github-metadata.js";
 import { createAsanaClient } from "./asana-client.js";
-import {
-  buildAsanaTaskPayload,
-  buildUpdatePayload,
-  resolveSection,
-  asanaConfig,
-} from "./field-mapping.js";
+import { syncIssue } from "./sync-issue.js";
+import { asanaConfig } from "./field-mapping.js";
 
 // ---------------------------------------------------------------------------
 // 1. Parse environment
@@ -132,89 +127,20 @@ async function main() {
   const { asanaToken, githubToken, issueData } = parseEnv();
   console.log(`Issue: ${issueData.repoFullName}#${issueData.number} — "${issueData.title}"`);
   console.log(`State: ${issueData.state}`);
-  // Fetch project board metadata via GraphQL (Product and Services #57)
-  console.log("\nFetching GitHub Project #57 metadata...");
-  let projectItem = null;
-  try {
-    projectItem = await fetchProjectMetadata(githubToken, issueData.nodeId);
-    if (projectItem) {
-      console.log(`Found on board: ${projectItem.projectTitle}`);
-      const fieldNames = Object.keys(projectItem.fields);
-      console.log(`  Fields populated: ${fieldNames.join(", ") || "none"}`);
-      for (const [name, data] of Object.entries(projectItem.fields)) {
-        const display = data.type === "iteration"
-          ? `${data.value} (${data.startDate}, ${data.duration} days)`
-          : data.value;
-        console.log(`    ${name}: ${display}`);
-      }
-    } else {
-      console.log("Issue is not on the Product and Services board (#57)");
-    }
-  } catch (err) {
-    // Non-fatal: issue might not be on the project board
-    console.warn(`Warning: Could not fetch project metadata: ${err.message}`);
-    console.warn("Continuing without project board fields...");
-  }
-
   // Initialize Asana client
   const asana = createAsanaClient(asanaToken);
 
-  // Idempotency check: search for existing task
-  console.log("\nChecking for existing Asana task...");
-  const cfGid = asanaConfig.custom_fields.github_issue_url;
-  let existingTask = null;
-
-  if (cfGid && !cfGid.startsWith("REPLACE")) {
-    try {
-      const matches = await asana.searchTasks(
-        asanaConfig.workspace_gid,
-        asanaConfig.project_gid,
-        { [cfGid]: issueData.htmlUrl }
-      );
-      if (matches.length > 0) {
-        existingTask = matches[0];
-        console.log(`Found existing task: ${existingTask.gid} — "${existingTask.name}"`);
-      }
-    } catch (err) {
-      console.warn(`Warning: Search failed, will create new task: ${err.message}`);
-    }
-  } else {
-    console.warn("GitHub Issue URL custom field not configured — skipping idempotency check");
-  }
-
-  let task;
-
-  if (existingTask) {
-    // Update existing task
-    console.log("\nUpdating existing Asana task...");
-    const updatePayload = buildUpdatePayload(issueData, projectItem);
-    task = await asana.updateTask(existingTask.gid, updatePayload);
-    console.log(`Updated task: ${task.gid}`);
-  } else {
-    // Create new task
-    console.log("\nCreating new Asana task...");
-    const createPayload = buildAsanaTaskPayload(issueData, projectItem);
-    task = await asana.createTask(createPayload);
-    console.log(`Created task: ${task.gid} — "${task.name}"`);
-
-    // Optionally move to a section
-    const sectionGid = resolveSection(issueData.milestone);
-    if (sectionGid) {
-      try {
-        await asana.addTaskToSection(sectionGid, task.gid);
-        console.log(`Moved task to section: ${sectionGid}`);
-      } catch (err) {
-        console.warn(`Warning: Could not move task to section: ${err.message}`);
-      }
-    }
-  }
+  // Sync issue (fetch project metadata, check idempotency, create or update)
+  console.log("\nSyncing issue to Asana...");
+  const { action, task } = await syncIssue(asana, githubToken, issueData);
+  console.log(`${action === "created" ? "Created" : "Updated"} task: ${task.gid}`);
 
   // Build the Asana task URL
   const asanaTaskUrl = `https://app.asana.com/0/${asanaConfig.project_gid}/${task.gid}`;
   console.log(`\nAsana task URL: ${asanaTaskUrl}`);
 
   // Post comment on GitHub issue (only for new tasks)
-  if (!existingTask) {
+  if (action === "created") {
     console.log("\nPosting link on GitHub issue...");
     await postGitHubComment(
       githubToken,

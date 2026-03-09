@@ -13,14 +13,8 @@
  */
 
 import { graphql } from "@octokit/graphql";
-import { fetchProjectMetadata } from "./github-metadata.js";
 import { createAsanaClient } from "./asana-client.js";
-import {
-  buildAsanaTaskPayload,
-  buildUpdatePayload,
-  resolveSection,
-  asanaConfig,
-} from "./field-mapping.js";
+import { syncIssue } from "./sync-issue.js";
 
 // ---------------------------------------------------------------------------
 // GitHub search: find all CSH-labeled issues
@@ -102,70 +96,6 @@ async function findCSHIssues(token, org) {
 }
 
 // ---------------------------------------------------------------------------
-// Sync a single issue (shared logic with sync-to-asana.js)
-// ---------------------------------------------------------------------------
-
-function isConfigured(value) {
-  return value && typeof value === "string" && !value.startsWith("REPLACE");
-}
-
-async function syncOneIssue(asana, githubToken, issueData) {
-  const label = `${issueData.repoFullName}#${issueData.number}`;
-
-  // Fetch project board metadata
-  let projectItem = null;
-  try {
-    projectItem = await fetchProjectMetadata(githubToken, issueData.nodeId);
-  } catch (err) {
-    console.warn(`  ⚠ Could not fetch project metadata: ${err.message}`);
-  }
-
-  // Check for existing Asana task
-  const cfGid = asanaConfig.custom_fields.github_issue_url;
-  let existingTask = null;
-
-  if (isConfigured(cfGid)) {
-    try {
-      const matches = await asana.searchTasks(
-        asanaConfig.workspace_gid,
-        asanaConfig.project_gid,
-        { [cfGid]: issueData.htmlUrl }
-      );
-      if (matches.length > 0) {
-        existingTask = matches[0];
-      }
-    } catch (err) {
-      console.warn(`  ⚠ Search failed: ${err.message}`);
-    }
-  }
-
-  let task;
-
-  if (existingTask) {
-    const updatePayload = buildUpdatePayload(issueData, projectItem);
-    task = await asana.updateTask(existingTask.gid, updatePayload);
-    console.log(`  ✅ Updated: ${label} → task ${task.gid}`);
-    return { action: "updated", task };
-  } else {
-    const createPayload = buildAsanaTaskPayload(issueData, projectItem);
-    task = await asana.createTask(createPayload);
-    console.log(`  ✅ Created: ${label} → task ${task.gid}`);
-
-    // Move to section if applicable
-    const sectionGid = resolveSection(issueData.milestone);
-    if (sectionGid) {
-      try {
-        await asana.addTaskToSection(sectionGid, task.gid);
-      } catch (err) {
-        console.warn(`  ⚠ Could not move to section: ${err.message}`);
-      }
-    }
-
-    return { action: "created", task };
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -202,7 +132,8 @@ async function main() {
     console.log(`Syncing: ${label} — "${issueData.title}"`);
 
     try {
-      const { action } = await syncOneIssue(asana, token, issueData);
+      const { action, task } = await syncIssue(asana, token, issueData);
+      console.log(`  ✅ ${action === "created" ? "Created" : "Updated"}: ${label} → task ${task.gid}`);
       results[action]++;
     } catch (err) {
       console.error(`  ❌ Failed: ${err.message}`);
