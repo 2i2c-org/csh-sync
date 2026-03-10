@@ -6,11 +6,13 @@
  * Flow:
  *   1. Parse issue data from environment variables (set by GitHub Actions)
  *   2. Fetch enriched project board metadata via GraphQL
- *   3. Check if an Asana task already exists (idempotency)
- *   4. Create or update the Asana task
- *   5. Post a comment on the GitHub issue with the Asana link
+ *   3. If closing: enforce Hours Spent is set (reopen + comment if not)
+ *   4. Check if an Asana task already exists (idempotency)
+ *   5. Create or update the Asana task
+ *   6. Post a comment on the GitHub issue with the Asana link (new tasks only)
  */
 
+import { fetchProjectMetadata } from "./github-metadata.js";
 import { createAsanaClient } from "./asana-client.js";
 import { syncIssue } from "./sync-issue.js";
 import { asanaConfig } from "./field-mapping.js";
@@ -80,41 +82,53 @@ function parseEnv() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Post a comment on the GitHub issue linking to the Asana task
+// GitHub helpers
 // ---------------------------------------------------------------------------
 
-async function postGitHubComment(githubToken, repoFullName, issueNumber, asanaTaskUrl) {
-  const [owner, repo] = repoFullName.split("/");
-  const url = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`;
-
-  const body = [
-    `🔗 **Asana task created for Community Success Hours**`,
-    ``,
-    `This issue has been synced to Asana: ${asanaTaskUrl}`,
-    ``,
-    `_Automated by [csh-sync](https://github.com/2i2c-org/csh-sync)_`,
-  ].join("\n");
-
-  const response = await fetch(url, {
-    method: "POST",
+async function githubRequest(token, method, path, body = null) {
+  const url = `https://api.github.com${path}`;
+  const options = {
+    method,
     headers: {
-      Authorization: `token ${githubToken}`,
+      Authorization: `token ${token}`,
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
     },
-    body: JSON.stringify({ body }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.warn(`Warning: Could not post GitHub comment: ${response.status} ${errorText}`);
-  } else {
-    console.log("Posted Asana link as comment on GitHub issue");
+  };
+  if (body) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
   }
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const text = await response.text();
+    console.warn(`Warning: GitHub API ${method} ${path} → ${response.status}: ${text}`);
+  }
+  return response;
+}
+
+async function postIssueComment(token, repoFullName, issueNumber, body) {
+  const [owner, repo] = repoFullName.split("/");
+  await githubRequest(
+    token,
+    "POST",
+    `/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+    { body }
+  );
+}
+
+async function reopenIssue(token, repoFullName, issueNumber) {
+  const [owner, repo] = repoFullName.split("/");
+  await githubRequest(
+    token,
+    "PATCH",
+    `/repos/${owner}/${repo}/issues/${issueNumber}`,
+    { state: "open" }
+  );
 }
 
 // ---------------------------------------------------------------------------
-// 3. Main
+// Main
 // ---------------------------------------------------------------------------
 
 async function main() {
@@ -123,37 +137,76 @@ async function main() {
   const eventAction = process.env.EVENT_ACTION || "unknown";
   console.log(`Trigger: issues.${eventAction}`);
 
-  // Parse inputs
   const { asanaToken, githubToken, issueData } = parseEnv();
   console.log(`Issue: ${issueData.repoFullName}#${issueData.number} — "${issueData.title}"`);
   console.log(`State: ${issueData.state}`);
-  // Initialize Asana client
+
+  // Fetch project board metadata (needed both for the close guard and for Asana sync)
+  console.log("\nFetching project board metadata...");
+  let projectItem = null;
+  try {
+    projectItem = await fetchProjectMetadata(githubToken, issueData.nodeId);
+  } catch (err) {
+    console.warn(`Warning: Could not fetch project metadata: ${err.message}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Close guard: enforce Hours Spent is set before allowing a close
+  // ---------------------------------------------------------------------------
+  if (eventAction === "closed") {
+    if (projectItem && projectItem.fields["Hours spent"] === undefined) {
+      console.log("\n⚠ Issue closed without Hours Spent set — reopening...");
+
+      await reopenIssue(githubToken, issueData.repoFullName, issueData.number);
+      console.log("Reopened issue.");
+
+      const boardUrl = projectItem.projectUrl;
+      const comment = [
+        `⚠️ **This issue cannot be closed until Hours Spent is recorded**`,
+        ``,
+        `The **Hours Spent** field on the [${projectItem.projectTitle} project board](${boardUrl}) has not been filled in.`,
+        ``,
+        `Please update **Hours Spent** in the project board, then re-close this issue.`,
+        ``,
+        `_This issue was automatically reopened by [csh-sync](https://github.com/2i2c-org/csh-sync)_`,
+      ].join("\n");
+
+      await postIssueComment(githubToken, issueData.repoFullName, issueData.number, comment);
+      console.log("Posted explanation comment.");
+
+      console.log("\n=== Close blocked: Hours Spent not set ===");
+      return;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sync to Asana (pass pre-fetched projectItem to avoid a second GraphQL call)
+  // ---------------------------------------------------------------------------
   const asana = createAsanaClient(asanaToken);
 
-  // Sync issue (fetch project metadata, check idempotency, create or update)
   console.log("\nSyncing issue to Asana...");
-  const { action, task } = await syncIssue(asana, githubToken, issueData);
+  const { action, task } = await syncIssue(asana, githubToken, issueData, projectItem);
   console.log(`${action === "created" ? "Created" : "Updated"} task: ${task.gid}`);
 
-  // Build the Asana task URL
   const asanaTaskUrl = `https://app.asana.com/0/${asanaConfig.project_gid}/${task.gid}`;
   console.log(`\nAsana task URL: ${asanaTaskUrl}`);
 
-  // Post comment on GitHub issue (only for new tasks)
+  // Post Asana link comment on GitHub (only for newly created tasks)
   if (action === "created") {
     console.log("\nPosting link on GitHub issue...");
-    await postGitHubComment(
-      githubToken,
-      issueData.repoFullName,
-      issueData.number,
-      asanaTaskUrl
-    );
+    const body = [
+      `🔗 **Asana task created for Community Success Hours**`,
+      ``,
+      `This issue has been synced to Asana: ${asanaTaskUrl}`,
+      ``,
+      `_Automated by [csh-sync](https://github.com/2i2c-org/csh-sync)_`,
+    ].join("\n");
+    await postIssueComment(githubToken, issueData.repoFullName, issueData.number, body);
   }
 
   console.log("\n=== Sync complete ===");
 }
 
-// Run
 main().catch((err) => {
   console.error("\n❌ Sync failed:", err.message);
   console.error(err.stack);

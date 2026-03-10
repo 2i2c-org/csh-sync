@@ -17,13 +17,25 @@ export function isConfigured(value) {
   return value && typeof value === "string" && !value.startsWith("REPLACE");
 }
 
-export async function syncIssue(asana, githubToken, issueData) {
-  // Fetch project board metadata
-  let projectItem = null;
-  try {
-    projectItem = await fetchProjectMetadata(githubToken, issueData.nodeId);
-  } catch (err) {
-    console.warn(`  ⚠ Could not fetch project metadata: ${err.message}`);
+/**
+ * @param {Object} asana - Asana client
+ * @param {string} githubToken
+ * @param {Object} issueData
+ * @param {Object|null|undefined} [preFetchedProjectItem] - Pass to skip the
+ *   internal fetch (undefined = not provided, null = caller confirmed not on board)
+ */
+export async function syncIssue(asana, githubToken, issueData, preFetchedProjectItem = undefined) {
+  // Fetch project board metadata (unless the caller already did it)
+  let projectItem;
+  if (preFetchedProjectItem !== undefined) {
+    projectItem = preFetchedProjectItem;
+  } else {
+    projectItem = null;
+    try {
+      projectItem = await fetchProjectMetadata(githubToken, issueData.nodeId);
+    } catch (err) {
+      console.warn(`  ⚠ Could not fetch project metadata: ${err.message}`);
+    }
   }
 
   // Check for existing Asana task
